@@ -1,12 +1,14 @@
 using UnityEngine;
 
 public class StatePayload {
-    public uint tick;
-    public float deliveryTime; // Only used by the server to simulate latency
-    public Vector3 position;
-    public Vector3 velocity;
-    public Vector3 angularVelocity;
-    public Quaternion rotation;
+    public uint tick { get; private set; }
+    public float deliveryTime { get; set; } // Only used by the server to simulate latency
+    public Vector3 position { get; set; }
+    public Vector3 velocity { get; set; }
+    public Vector3 angularVelocity { get; set; }
+    public Quaternion rotation { get; set; }
+
+    public StatePayload() { }
 
     public StatePayload(uint tick, Rigidbody rb) {
         this.tick = tick;

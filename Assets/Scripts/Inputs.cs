@@ -1,13 +1,15 @@
 using UnityEngine;
 
 public class Inputs {
-    public bool up;
-    public bool down;
-    public bool left;
-    public bool right;
-    public bool jump;
+    public bool up { get; set; }
+    public bool down { get; set; }
+    public bool left { get; set; }
+    public bool right { get; set; }
+    public bool jump { get; set; }
 
-    public Inputs() {
+    public Inputs() { }
+
+    public void SetInputs() {
         up = Input.GetKey(KeyCode.W);
         down = Input.GetKey(KeyCode.S);
         left = Input.GetKey(KeyCode.A);

@@ -1,6 +1,5 @@
 using UnityEngine.SceneManagement;
 using UnityEngine;
-using Unity.VisualScripting;
 
 public class InstanciateSceneController : MonoBehaviour {
     public static InstanciateSceneController Instance;

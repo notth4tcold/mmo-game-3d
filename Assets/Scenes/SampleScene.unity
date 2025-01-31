@@ -318,6 +318,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1553726681}
   - component: {fileID: 1553726682}
+  - component: {fileID: 1553726683}
   m_Layer: 0
   m_Name: InstanciateSceneController
   m_TagString: Untagged
@@ -352,9 +353,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0b1496274556d9c4e973177f0c5d5036, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  playerPrefab: {fileID: 4947543467555949020, guid: 6a3558f1078c68e4cac40c11b74fe0c3, type: 3}
   client: {fileID: 4077631566795247459, guid: c62e9deb64345094ea75f85541f0ef29, type: 3}
   server: {fileID: 5492022393433207187, guid: 223ea2be28282174caeceb0f1ec90c04, type: 3}
+--- !u!114 &1553726683
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1553726679}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0261ecbabe10096489cfd6dbc93f56a6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

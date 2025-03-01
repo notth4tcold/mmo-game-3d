@@ -21,12 +21,13 @@ public class UdpServerController {
             udpListener.BeginReceive(udpReceiveCallback, null);
 
             if (data.Length < 4) {
-                Debug.Log("Err. receiving udp data!");
+                Debug.Log("Err. receiving udp data! DATA LENGHT < 4");
                 return;
             }
 
             handleData(data, clientEndPoint);
-        } catch {
+        } catch (System.Exception e) {
+            Debug.Log(e);
             Debug.Log("Err. receiving udp data!");
         }
     }

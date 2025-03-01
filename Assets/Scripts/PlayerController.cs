@@ -2,17 +2,22 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour {
     private Rigidbody rb;
-    private float moveSpeed = 1;
+    private float maxSpeed = 5f;
+    private float moveSpeed = 2.5f;
+    private float jumpThreshold = -2;
+
+    public bool isCollidingWithOtherPlayer = false;
 
     void Start() {
         rb = gameObject.GetComponent<Rigidbody>();
     }
 
     public void movePlayer(Inputs inputs) {
-        if (inputs.up) rb.AddForce(Vector3.forward * moveSpeed, ForceMode.Impulse);
-        if (inputs.down) rb.AddForce(Vector3.back * moveSpeed, ForceMode.Impulse);
-        if (inputs.left) rb.AddForce(Vector3.left * moveSpeed, ForceMode.Impulse);
-        if (inputs.right) rb.AddForce(Vector3.right * moveSpeed, ForceMode.Impulse);
-        if (inputs.jump) rb.AddForce(Vector3.up * moveSpeed, ForceMode.Impulse);
+        if (rb == null) return;
+        if (rb.velocity.z <= maxSpeed && inputs.up) rb.AddForce(Vector3.forward * moveSpeed, ForceMode.VelocityChange);
+        if (rb.velocity.z >= -maxSpeed && inputs.down) rb.AddForce(Vector3.back * moveSpeed, ForceMode.VelocityChange);
+        if (rb.velocity.x >= -maxSpeed && inputs.left) rb.AddForce(Vector3.left * moveSpeed, ForceMode.VelocityChange);
+        if (rb.velocity.x <= maxSpeed && inputs.right) rb.AddForce(Vector3.right * moveSpeed, ForceMode.VelocityChange);
+        if (rb.velocity.y <= maxSpeed && rb.velocity.y >= -maxSpeed && rb.position.y <= jumpThreshold && inputs.jump) rb.AddForce(Vector3.up * moveSpeed, ForceMode.VelocityChange);
     }
 }

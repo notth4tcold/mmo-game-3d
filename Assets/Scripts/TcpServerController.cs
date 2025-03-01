@@ -32,7 +32,7 @@ public class TcpServerController {
             int byteLenght = stream.EndRead(result);
 
             if (byteLenght <= 0) {
-                Debug.Log("Disconnecting client tcp...");
+                Debug.Log("Disconnecting client tcp... DATA LENGHT < 4");
                 Server.instance.disconnectPlayer(id);
                 return;
             }
@@ -42,7 +42,8 @@ public class TcpServerController {
             receiveData.Reset(handleData(data));
 
             stream.BeginRead(recieveBuffer, 0, dataBufferSize, receiveCallback, null);
-        } catch {
+        } catch (System.Exception e) {
+            Debug.Log(e);
             Debug.Log("Disconnecting client tcp...");
             Server.instance.disconnectPlayer(id);
         }

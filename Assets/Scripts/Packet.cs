@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using System;
 using System.Text;
+using Unity.VisualScripting;
 
 public class Packet {
     private List<byte> buffer;
@@ -111,25 +112,15 @@ public class Packet {
             Type type = prop.PropertyType;
             object value = prop.GetValue(inputs, null);
             if (type == typeof(bool)) Write((bool)value);
+            if (type == typeof(uint)) Write((uint)value);
         }
     }
 
-    public void Write(InputPayload inputPayload) {
-        foreach (var prop in inputPayload.GetType().GetProperties()) {
+    public void Write(PlayerState playerState) {
+        foreach (var prop in playerState.GetType().GetProperties()) {
             Type type = prop.PropertyType;
-            object value = prop.GetValue(inputPayload, null);
-            if (type == typeof(float)) Write((float)value);
-            if (type == typeof(uint)) Write((uint)value);
-            if (type == typeof(Inputs)) Write((Inputs)value);
-        }
-    }
-
-    public void Write(StatePayload statePayload) {
-        foreach (var prop in statePayload.GetType().GetProperties()) {
-            Type type = prop.PropertyType;
-            object value = prop.GetValue(statePayload, null);
-            if (type == typeof(float)) Write((float)value);
-            if (type == typeof(uint)) Write((uint)value);
+            object value = prop.GetValue(playerState, null);
+            if (type == typeof(string)) Write((string)value);
             if (type == typeof(Vector3)) Write((Vector3)value);
             if (type == typeof(Quaternion)) Write((Quaternion)value);
         }
@@ -240,35 +231,22 @@ public class Packet {
         foreach (var prop in inputs.GetType().GetProperties()) {
             Type type = prop.PropertyType;
             if (type == typeof(bool)) prop.SetValue(inputs, ReadBool(moveReadPos));
+            if (type == typeof(uint)) prop.SetValue(inputs, ReadUint(moveReadPos));
         }
 
         return inputs;
     }
 
-    public InputPayload ReadInputPayload(bool moveReadPos = true) {
-        InputPayload inputPayload = new InputPayload();
+    public PlayerState ReadPlayerState(bool moveReadPos = true) {
+        PlayerState playerState = new PlayerState();
 
-        foreach (var prop in inputPayload.GetType().GetProperties()) {
+        foreach (var prop in playerState.GetType().GetProperties()) {
             Type type = prop.PropertyType;
-            if (type == typeof(float)) prop.SetValue(inputPayload, ReadFloat(moveReadPos));
-            if (type == typeof(uint)) prop.SetValue(inputPayload, ReadUint(moveReadPos));
-            if (type == typeof(Inputs)) prop.SetValue(inputPayload, ReadInputs(moveReadPos));
+            if (type == typeof(string)) prop.SetValue(playerState, ReadString(moveReadPos));
+            if (type == typeof(Vector3)) prop.SetValue(playerState, ReadVector3(moveReadPos));
+            if (type == typeof(Quaternion)) prop.SetValue(playerState, ReadQuaternion(moveReadPos));
         }
 
-        return inputPayload;
-    }
-
-    public StatePayload ReadStatePayload(bool moveReadPos = true) {
-        StatePayload statePayload = new StatePayload();
-
-        foreach (var prop in statePayload.GetType().GetProperties()) {
-            Type type = prop.PropertyType;
-            if (type == typeof(float)) prop.SetValue(statePayload, ReadFloat(moveReadPos));
-            if (type == typeof(uint)) prop.SetValue(statePayload, ReadUint(moveReadPos));
-            if (type == typeof(Vector3)) prop.SetValue(statePayload, ReadVector3(moveReadPos));
-            if (type == typeof(Quaternion)) prop.SetValue(statePayload, ReadQuaternion(moveReadPos));
-        }
-
-        return statePayload;
+        return playerState;
     }
 }

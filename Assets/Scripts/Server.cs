@@ -1,12 +1,11 @@
 using System.Collections.Generic;
+using System.Collections;
 using UnityEngine;
 using System.Net;
 using System.Net.Sockets;
-using System.Linq;
 
 public class Server : MonoBehaviour {
     public static Server instance;
-
     public GameObject playerPrefab;
 
     private TcpListener tcpListener;
@@ -15,13 +14,19 @@ public class Server : MonoBehaviour {
     private int maxPlayers = 50;
     private int port = 8080;
 
-    Dictionary<string, ServerPlayer> players = new Dictionary<string, ServerPlayer>();
+    public uint currentTick;
+    private bool runPhysics;
+
+    public Dictionary<string, ServerPlayer> players = new Dictionary<string, ServerPlayer>();
 
     private float timer;
     private float timeBetweenTicks;
-    private float latency = 2f;
-    private const int bufferSize = 1024;
-    //private const float serverTickRate = 60f; //timeBetweenTicks = 1f / serverTickRate;
+    private float latency = 0.2f;
+    private float packetLossChance = 0.2f;
+
+    private float minInputBufferSizeToStart = 3;
+    private float inputIsRunningLow = 2;
+    private float inputIsRunningHigh = 6;
 
     private void Awake() {
         if (instance != null && instance != this) {
@@ -33,68 +38,85 @@ public class Server : MonoBehaviour {
     }
 
     void Start() {
-        timer = 0.0f;
+        this.timer = 0.0f;
+        this.currentTick = 0;
+        this.runPhysics = false;
         startServer();
     }
 
     void Update() {
-        timeBetweenTicks = Time.fixedDeltaTime;
-        timer += Time.deltaTime;
+        this.timeBetweenTicks = Time.fixedDeltaTime;
+        this.timer += Time.deltaTime;
 
-        while (timer >= timeBetweenTicks && someoneNeedsToHandleTick()) {
-            timer -= timeBetweenTicks;
-            handleTick(timeBetweenTicks);
+        while (this.timer >= this.timeBetweenTicks) {
+            this.timer -= timeBetweenTicks;
+            handleTick(this.timeBetweenTicks);
         }
-
-        sendStateToClient();
-    }
-
-    private bool someoneNeedsToHandleTick() {
-        return players.Count > 0;
-        // foreach (var player in players.Values) {
-        //     if (player.receiveFromClientInputQueue.Count > 0) return true;
-        // }
-        // return false;
     }
 
     void handleTick(float timeBetweenTicks) {
-        foreach (var player in players.Values) {
-            if (player.receiveFromClientInputQueue.Count == 0) return;
+        foreach (var player in this.players.Values) {
+            if (!player.isReady || player.getInputsSize() < 0) continue;
+            Inputs inputs = player.getNextInputs(currentTick + 1);
 
-            InputPayload inputPayload = player.receiveFromClientInputQueue.Dequeue();
-
-            if (inputPayload.tick >= player.currentTick) {
-                player.playerController.movePlayer(inputPayload.inputs);
-                player.hasStateToSend = true;
+            if (inputs != null) {
+                player.playerController.movePlayer(inputs);
+                this.runPhysics = true;
             }
         }
-        InstanciateSceneController.Instance.serverPhysicsScene.Simulate(timeBetweenTicks);
 
-        foreach (var player in players.Values) {
-            if (player.hasStateToSend) {
-                player.currentTick++;
-                player.sendToClientStateQueue.Enqueue(new StatePayload(player.currentTick, player.rb, latency));
-                player.hasStateToSend = false;
+        if (this.runPhysics) {
+            InstanciateSceneController.Instance.serverPhysicsScene.Simulate(timeBetweenTicks);
+            ++this.currentTick;
+
+            StatePayload state = new StatePayload(this.currentTick);
+            foreach (ServerPlayer player in this.players.Values) {
+                if (!player.isReady) continue;
+                state.playerstates.Add(player.id, new PlayerState(player.id, player.rb));
             }
+
+            Packet packet = new Packet();
+            packet.Write("OnPlayerMovementState");
+            packet.Write(state.tick);
+            packet.Write(state.playerstates.Count);
+            foreach (PlayerState playerState in state.playerstates.Values) {
+                packet.Write(playerState);
+            }
+
+            foreach (PlayerState playerState in state.playerstates.Values) {
+                int inputBufferSize = players[playerState.id].getInputsSize();
+                packet.Write(playerState.id);
+                if (inputBufferSize <= inputIsRunningLow) {
+                    packet.Write("inputIsRunningLow");
+                } else if (inputBufferSize >= inputIsRunningHigh) {
+                    packet.Write("inputIsRunningHigh");
+                } else {
+                    packet.Write("inputIsRunningOk");
+                }
+            }
+
+            if (Random.value > this.packetLossChance) ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpDataToAll(packet)); });
+
+            this.runPhysics = false;
         }
     }
 
     void startServer() {
-        udpListener = new UdpServerController(new UdpClient(port));
-        udpListener.connect();
+        this.udpListener = new UdpServerController(new UdpClient(this.port));
+        this.udpListener.connect();
 
-        tcpListener = new TcpListener(IPAddress.Any, port);
-        tcpListener.Start();
-        tcpListener.BeginAcceptTcpClient(new System.AsyncCallback(tcpConnectCallback), null);
+        this.tcpListener = new TcpListener(IPAddress.Any, this.port);
+        this.tcpListener.Start();
+        this.tcpListener.BeginAcceptTcpClient(new System.AsyncCallback(tcpConnectCallback), null);
 
         Debug.Log("Server started!");
     }
 
     private void tcpConnectCallback(System.IAsyncResult result) {
-        TcpClient socket = tcpListener.EndAcceptTcpClient(result);
-        tcpListener.BeginAcceptTcpClient(new System.AsyncCallback(tcpConnectCallback), null);
+        TcpClient socket = this.tcpListener.EndAcceptTcpClient(result);
+        this.tcpListener.BeginAcceptTcpClient(new System.AsyncCallback(tcpConnectCallback), null);
 
-        if (totalPlayers >= maxPlayers) {
+        if (this.totalPlayers >= this.maxPlayers) {
             Debug.Log("Server is full.");
             return;
         }
@@ -106,10 +128,10 @@ public class Server : MonoBehaviour {
         player.tcp = tcp;
         tcp.connect();
 
-        players.Add(player.id, player);
+        this.players.Add(player.id, player);
         sendConnectByTcp(player.id);
 
-        totalPlayers++;
+        this.totalPlayers++;
 
         Debug.Log("New player connected by tcp!");
     }
@@ -119,125 +141,185 @@ public class Server : MonoBehaviour {
         packet.Write("OnConnectByTcp");
         packet.Write(id);
 
-        sendTcpData(id, packet);
+        ThreadManager.ExecuteOnMainThread(() => {
+            StartCoroutine(sendTcpData(id, packet));
+
+            // SEND BACK ONLINE PLAYERS
+            foreach (var player in this.players.Values) {
+                if (player.id != id) {
+                    packet = new Packet();
+                    packet.Write("OnRequestSpawnEnemy");
+                    packet.Write(player.id);
+                    packet.Write(player.username);
+                    packet.Write(player.rb.position);
+                    packet.Write(player.rb.rotation);
+                    StartCoroutine(sendTcpData(id, packet));
+                }
+            }
+        });
     }
 
     public void OnConnectByUdp(string id, Packet packet) {
         Debug.Log("new connection UDP client: " + id);
         Packet packetSend = new Packet();
         packetSend.Write("OnConnectByUdp");
-        sendUdpData(id, packetSend);
+        ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpData(id, packetSend)); });
+    }
+
+    public void OnRequestSpawnPosition(Packet packet) {
+        string id = packet.ReadString();
+        string username = packet.ReadString();
+
+        this.players[id].username = username;
+
+        Vector3 position = Vector3.zero;
+        Quaternion rotation = Quaternion.identity;
+
+        packet = new Packet();
+        packet.Write("OnRequestSpawnPosition");
+        packet.Write(this.currentTick);
+        packet.Write(position);
+        packet.Write(rotation);
+        ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendTcpData(id, packet)); });
     }
 
     public void OnRequestSpawnPlayer(Packet packet) {
         string id = packet.ReadString();
-        string username = packet.ReadString();
+        Vector3 position = packet.ReadVector3();
+        Quaternion rotation = packet.ReadQuaternion();
 
         ThreadManager.ExecuteOnMainThread(() => {
-            var playerSimulatorGo = Instantiate(playerPrefab, gameObject.scene) as GameObject;
+            var playerSimulatorGo = Instantiate(this.playerPrefab, gameObject.scene) as GameObject;
             playerSimulatorGo.GetComponent<Renderer>().material.color = Color.red;
 
-            players[id].username = username;
-            players[id].rb = playerSimulatorGo.GetComponent<Rigidbody>();
-            players[id].playerController = playerSimulatorGo.GetComponent<PlayerController>();
+            playerSimulatorGo.transform.position = position;
+            playerSimulatorGo.GetComponent<Rigidbody>().position = position;
+            playerSimulatorGo.transform.rotation = rotation;
+            playerSimulatorGo.GetComponent<Rigidbody>().rotation = rotation;
+
+            this.players[id].rb = playerSimulatorGo.GetComponent<Rigidbody>();
+            this.players[id].playerController = playerSimulatorGo.GetComponent<PlayerController>();
+
+            // SEND NEW PLAYER TO ALL
+            packet = new Packet();
+            packet.Write("OnRequestSpawnEnemy");
+            packet.Write(this.players[id].id);
+            packet.Write(this.players[id].username);
+            packet.Write(this.players[id].rb.position);
+            packet.Write(this.players[id].rb.rotation);
+            StartCoroutine(sendTcpDataToAll(id, packet));
         });
-
-        packet = new Packet();
-        packet.Write("OnRequestSpawnPlayer");
-        sendTcpData(id, packet);
-
-        packet = new Packet();
-        packet.Write("OnRequestSpawnEnemy");
-        packet.Write(id);
-        packet.Write(username);
-        sendTcpDataToAll(packet);
-        sendTcpDataToAll(id, packet);
-    }
-
-    void sendStateToClient() {
-        foreach (var player in players.Values) {
-            if (player.sendToClientStateQueue.Count > 0 && Time.time >= player.sendToClientStateQueue.Peek().deliveryTime) {
-                Packet packet = new Packet();
-                packet.Write("OnServerMovementState");
-                packet.Write(player.sendToClientStateQueue.Dequeue());
-                sendUdpData(player.id, packet);
-            }
-        }
     }
 
     public void OnClientInput(string id, Packet packet) {
-        InputPayload inputPayload = packet.ReadInputPayload();
-        players[id].receiveFromClientInputQueue.Enqueue(inputPayload);
+        int totalInputs = packet.ReadInt();
+
+        for (int i = 0; i < totalInputs; i++) {
+            Inputs inputs = packet.ReadInputs();
+
+            if (inputs.tick > this.players[id].lastInputTickRecieved) {
+                this.players[id].lastInputTickRecieved = inputs.tick;
+                this.players[id].addInputs(inputs);
+            }
+        }
+
+        if (!this.players[id].isReady && this.players[id].getInputsSize() > this.minInputBufferSizeToStart) {
+            ThreadManager.ExecuteOnMainThread(() => {
+                this.players[id].rb.isKinematic = false;
+                this.players[id].isReady = true;
+            });
+        }
     }
 
     public void setEndPointUdp(string id, IPEndPoint endPoint) {
-        players[id].endPointUdp = endPoint;
+        this.players[id].endPointUdp = endPoint;
     }
 
-    public void sendTcpData(string id, Packet packet) {
+    IEnumerator sendTcpData(string id, Packet packet) {
+        yield return new WaitForSeconds(this.latency);
+
         packet.WriteLength();
-        players[id].tcp.sendData(packet);
+        this.players[id].tcp.sendData(packet);
     }
 
-    public void sendTcpDataToAll(Packet packet) {
-        packet.WriteLength();
+    IEnumerator sendTcpDataToAll(Packet packet) {
+        yield return new WaitForSeconds(this.latency);
 
-        foreach (ServerPlayer player in players.Values) {
+        packet.WriteLength();
+        foreach (ServerPlayer player in this.players.Values) {
             player.tcp.sendData(packet);
         }
     }
 
-    public void sendTcpDataToAll(string exceptClient, Packet packet) {
+    IEnumerator sendTcpDataToAll(string exceptClient, Packet packet) {
+        yield return new WaitForSeconds(this.latency);
+
         packet.WriteLength();
-        foreach (ServerPlayer player in players.Values) {
+        foreach (ServerPlayer player in this.players.Values) {
             if (player.id != exceptClient) {
                 player.tcp.sendData(packet);
             }
         }
     }
 
-    public void sendUdpData(string id, Packet packet) {
-        packet.WriteLength();
-        udpListener.sendData(packet, players[id].endPointUdp);
-    }
+    IEnumerator sendUdpData(string id, Packet packet) {
+        yield return new WaitForSeconds(this.latency);
 
-    public void sendUdpDataToAll(Packet packet) {
         packet.WriteLength();
-        foreach (ServerPlayer player in players.Values) {
-            udpListener.sendData(packet, player.endPointUdp);
+        if (this.players[id].endPointUdp != null) {
+            this.udpListener.sendData(packet, this.players[id].endPointUdp);
         }
     }
 
-    public void sendUdpDataToAll(string exceptClient, Packet packet) {
+    IEnumerator sendUdpDataToAll(Packet packet) {
+        yield return new WaitForSeconds(this.latency);
+
         packet.WriteLength();
-        foreach (ServerPlayer player in players.Values) {
+        foreach (ServerPlayer player in this.players.Values) {
+            if (player.endPointUdp != null) {
+                this.udpListener.sendData(packet, player.endPointUdp);
+            }
+        }
+    }
+
+    IEnumerator sendUdpDataToAll(string exceptClient, Packet packet) {
+        yield return new WaitForSeconds(this.latency);
+
+        packet.WriteLength();
+        foreach (ServerPlayer player in this.players.Values) {
             if (player.id != exceptClient) {
-                udpListener.sendData(packet, player.endPointUdp);
+                if (player.endPointUdp != null) {
+                    this.udpListener.sendData(packet, player.endPointUdp);
+                }
             }
         }
     }
 
     public void disconnectPlayer(string id) {
 
-        ServerPlayer player = players[id];
+        ServerPlayer player = this.players[id];
         if (player == null) return;
 
         player.disconnect();
-        players.Remove(player.id);
+        this.players.Remove(id);
+
+        ThreadManager.ExecuteOnMainThread(() => {
+            Destroy(player.rb.gameObject);
+        });
 
         Packet packet = new Packet();
-        packet.Write("playerDisconnect");
-        packet.Write(player.id);
+        packet.Write("OnDisconnectEnemy");
+        packet.Write(id);
 
-        sendTcpDataToAll(player.id, packet);
+        ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendTcpDataToAll(id, packet)); });
 
-        Debug.Log("Player [id: " + player.id + " name: " + player.username + "] has disconnect!");
+        Debug.Log("Player [id: " + id + " name: " + player.username + "] has disconnect!");
     }
 
     public void disconnectServer() {
-        udpListener = null;
+        this.udpListener = null;
 
-        foreach (ServerPlayer player in players.Values) {
+        foreach (ServerPlayer player in this.players.Values) {
             disconnectPlayer(player.id);
         }
     }

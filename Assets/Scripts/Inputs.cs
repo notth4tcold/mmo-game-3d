@@ -1,6 +1,8 @@
 using UnityEngine;
 
 public class Inputs {
+    public uint tick { get; private set; }
+
     public bool up { get; set; }
     public bool down { get; set; }
     public bool left { get; set; }
@@ -8,6 +10,10 @@ public class Inputs {
     public bool jump { get; set; }
 
     public Inputs() { }
+
+    public Inputs(uint tick) {
+        this.tick = tick;
+    }
 
     public void SetInputs() {
         up = Input.GetKey(KeyCode.W);

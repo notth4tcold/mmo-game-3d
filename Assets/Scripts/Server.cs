@@ -14,19 +14,20 @@ public class Server : MonoBehaviour {
     private int maxPlayers = 50;
     private int port = 8080;
 
-    public uint currentTick;
-    private bool runPhysics;
+    private uint currentTick;
+    private bool sendState;
 
     public Dictionary<string, ServerPlayer> players = new Dictionary<string, ServerPlayer>();
 
     private float timer;
     private float timeBetweenTicks;
+    private const float tickRate = 120f;
     private float latency = 0.2f;
-    private float packetLossChance = 0.2f;
+    private float packetLossChance = 0.05f;
 
-    private float minInputBufferSizeToStart = 3;
-    private float inputIsRunningLow = 2;
-    private float inputIsRunningHigh = 6;
+    private float minInputBufferSizeToStart = 8;
+    private float inputBufferIsLow = 4;
+    private float inputBufferIsHigh = 15;
 
     private void Awake() {
         if (instance != null && instance != this) {
@@ -38,37 +39,34 @@ public class Server : MonoBehaviour {
     }
 
     void Start() {
-        this.timer = 0.0f;
-        this.currentTick = 0;
-        this.runPhysics = false;
+        this.timeBetweenTicks = 1f / tickRate;
         startServer();
     }
 
     void Update() {
-        this.timeBetweenTicks = Time.fixedDeltaTime;
         this.timer += Time.deltaTime;
 
         while (this.timer >= this.timeBetweenTicks) {
             this.timer -= timeBetweenTicks;
+            this.currentTick++;
             handleTick(this.timeBetweenTicks);
         }
     }
 
-    void handleTick(float timeBetweenTicks) {
+    void handleTick(float tickTime) {
         foreach (var player in this.players.Values) {
             if (!player.isReady || player.getInputsSize() < 0) continue;
-            Inputs inputs = player.getNextInputs(currentTick + 1);
+            Inputs inputs = player.getNextInputs(currentTick);
 
             if (inputs != null) {
                 player.playerController.movePlayer(inputs);
-                this.runPhysics = true;
+                this.sendState = true;
             }
         }
 
-        if (this.runPhysics) {
-            InstanciateSceneController.Instance.serverPhysicsScene.Simulate(timeBetweenTicks);
-            ++this.currentTick;
+        InstanciateSceneController.Instance.serverPhysicsScene.Simulate(tickTime);
 
+        if (this.sendState) {
             StatePayload state = new StatePayload(this.currentTick);
             foreach (ServerPlayer player in this.players.Values) {
                 if (!player.isReady) continue;
@@ -86,18 +84,18 @@ public class Server : MonoBehaviour {
             foreach (PlayerState playerState in state.playerstates.Values) {
                 int inputBufferSize = players[playerState.id].getInputsSize();
                 packet.Write(playerState.id);
-                if (inputBufferSize <= inputIsRunningLow) {
-                    packet.Write("inputIsRunningLow");
-                } else if (inputBufferSize >= inputIsRunningHigh) {
-                    packet.Write("inputIsRunningHigh");
+                if (inputBufferSize <= inputBufferIsLow) {
+                    packet.Write("inputBufferIsLow");
+                } else if (inputBufferSize >= inputBufferIsHigh) {
+                    packet.Write("inputBufferIsHigh");
                 } else {
-                    packet.Write("inputIsRunningOk");
+                    packet.Write("inputBufferIsOk");
                 }
             }
 
             if (Random.value > this.packetLossChance) ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpDataToAll(packet)); });
 
-            this.runPhysics = false;
+            this.sendState = false;
         }
     }
 
@@ -177,9 +175,9 @@ public class Server : MonoBehaviour {
 
         packet = new Packet();
         packet.Write("OnRequestSpawnPosition");
-        packet.Write(this.currentTick);
         packet.Write(position);
         packet.Write(rotation);
+        packet.Write(this.currentTick);
         ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendTcpData(id, packet)); });
     }
 
@@ -199,6 +197,8 @@ public class Server : MonoBehaviour {
 
             this.players[id].rb = playerSimulatorGo.GetComponent<Rigidbody>();
             this.players[id].playerController = playerSimulatorGo.GetComponent<PlayerController>();
+
+            Debug.Log("SERVER SPAWN TICK: " + this.currentTick);
 
             // SEND NEW PLAYER TO ALL
             packet = new Packet();
@@ -223,10 +223,12 @@ public class Server : MonoBehaviour {
             }
         }
 
-        if (!this.players[id].isReady && this.players[id].getInputsSize() > this.minInputBufferSizeToStart) {
+        if (!this.players[id].isReady && this.players[id].getInputsSize() >= this.minInputBufferSizeToStart) {
             ThreadManager.ExecuteOnMainThread(() => {
                 this.players[id].rb.isKinematic = false;
                 this.players[id].isReady = true;
+
+                Debug.Log("SERVER TICK: " + this.currentTick);
             });
         }
     }

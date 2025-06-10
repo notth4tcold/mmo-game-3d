@@ -1,6 +1,5 @@
 using UnityEngine;
 using System.Collections;
-using System;
 
 public class LogViewer : MonoBehaviour {
     public static LogViewer instance;
@@ -32,6 +31,18 @@ public class LogViewer : MonoBehaviour {
         GUILayout.Label("\n" + string.Join("\n", logQueue.ToArray()), style);
         GUILayout.EndArea();
 
+        if (Server.instance) {
+            style.normal.textColor = Color.red;
+
+            GUILayout.BeginArea(new Rect(Screen.width - 800, 0, 800, 800));
+            foreach (var player in Server.instance.players.Values) {
+                if (player.isReady) {
+                    GUILayout.Label("Player Id: " + player.id + " Input buffer size: " + Server.instance.players[player.id].getInputsSize(), style);
+                }
+            }
+            GUILayout.EndArea();
+        }
+
         if (!Client.instance || !Client.instance.isReady) return;
 
         style.normal.textColor = Color.green;
@@ -41,11 +52,11 @@ public class LogViewer : MonoBehaviour {
         GUILayout.Label("Ping: " + Client.instance.tcp.getPing().ToString("F2") + " ms", style);
         GUILayout.Label("Jitter: " + Client.instance.tcp.getJitter().ToString("F2") + " ms", style);
 
-        // Client.instance.tcp.updateThroughput();
-        // GUILayout.Label("Tcp Bytes Enviados: " + Client.instance.tcp.totalBytesSent.ToString("F2") + " (" + Client.instance.tcp.bytesUploadRate.ToString("F2") + " KB/s)", style);
-        // GUILayout.Label("Tcp Bytes Recebidos: " + Client.instance.tcp.totalBytesReceived.ToString("F2") + " (" + Client.instance.tcp.bytesDownloadRate.ToString("F2") + " KB/s)", style);
-        // GUILayout.Label("Tcp Pacotes Enviados: " + Client.instance.tcp.totalPacketsSent + " (" + Client.instance.tcp.packetsUploadRate.ToString("F2") + " P/S)", style);
-        // GUILayout.Label("Tcp Pacotes Recebidos: " + Client.instance.tcp.totalPacketsReceived + " (" + Client.instance.tcp.packetsDownloadRate.ToString("F2") + " P/S)", style);
+        Client.instance.tcp.updateThroughput();
+        GUILayout.Label("Tcp Bytes Enviados: " + Client.instance.tcp.totalBytesSent.ToString("F2") + " (" + Client.instance.tcp.bytesUploadRate.ToString("F2") + " KB/s)", style);
+        GUILayout.Label("Tcp Bytes Recebidos: " + Client.instance.tcp.totalBytesReceived.ToString("F2") + " (" + Client.instance.tcp.bytesDownloadRate.ToString("F2") + " KB/s)", style);
+        GUILayout.Label("Tcp Pacotes Enviados: " + Client.instance.tcp.totalPacketsSent + " (" + Client.instance.tcp.packetsUploadRate.ToString("F2") + " P/S)", style);
+        GUILayout.Label("Tcp Pacotes Recebidos: " + Client.instance.tcp.totalPacketsReceived + " (" + Client.instance.tcp.packetsDownloadRate.ToString("F2") + " P/S)", style);
 
         Client.instance.udp.updateThroughput();
         GUILayout.Label("Udp Bytes Enviados: " + Client.instance.udp.totalBytesSent.ToString("F2") + " (" + Client.instance.udp.bytesUploadRate.ToString("F2") + " KB/s)", style);
@@ -59,8 +70,6 @@ public class LogViewer : MonoBehaviour {
 
         GUILayout.Label("Latency added: " + (Client.instance.latency * 1000) + " ms", style);
         GUILayout.Label("Packet lost added: " + (Client.instance.packetLossChance * 100) + " %", style);
-
-        GUILayout.Label("TOTAL input cached on server: " + Server.instance.players[Client.instance.id].getInputsSize());
 
         GUILayout.EndArea();
     }

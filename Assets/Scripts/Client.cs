@@ -9,15 +9,15 @@ public class Client : MonoBehaviour {
     public GameObject playerPrefab;
 
     public string id;
-    private string ip = "192.168.0.15";
+    private string ip = "192.168.0.17";
     private int port = 8080;
 
-    public bool isReady = false;
-    public uint currentTick;
+    public bool isReady { get; private set; }
+    private uint currentTick;
     private uint lastStateReceivedTick;
 
-    public TcpClientController tcp;
-    public UdpClientController udp;
+    public TcpClientController tcp { get; private set; }
+    public UdpClientController udp { get; private set; }
 
     private float timer;
     private float timeBetweenTicks;
@@ -27,18 +27,19 @@ public class Client : MonoBehaviour {
     private const float tickRateSlowPace = 100f;
     private const int bufferSize = 1024;
 
-    public float latency = 0.2f;
-    public float packetLossChance = 0.2f;
+    public float latency { get; private set; } = 0.2f;
+    public float packetLossChance { get; private set; } = 0.05f;
 
-    public double tickRateCheck;
+    public double tickRateCheck { get; private set; }
     private int ticks;
     private float lastTickCheck;
+    private float minInputBufferSizeToStart = 8;
     private uint maxRedundantInputsToSend = 20;
 
     public Dictionary<string, Player> players = new Dictionary<string, Player>();
 
-    public StatePayload[] stateBuffer { get; set; }
-    public Inputs[] inputBuffer { get; set; }
+    private StatePayload[] stateBuffer { get; set; }
+    private Inputs[] inputBuffer { get; set; }
 
     private void Awake() {
         if (instance != null && instance != this) {
@@ -50,11 +51,6 @@ public class Client : MonoBehaviour {
     }
 
     void Start() {
-        this.timer = 0.0f;
-        this.currentTick = 0;
-        this.lastStateReceivedTick = 0;
-        this.ticks = 0;
-        this.tickRateCheck = 0;
         this.timeBetweenTicks = 1f / tickRate;
         this.lastTickCheck = Time.time;
         this.stateBuffer = new StatePayload[bufferSize];
@@ -68,6 +64,8 @@ public class Client : MonoBehaviour {
         while (this.timer >= this.timeBetweenTicks) {
             this.timer -= this.timeBetweenTicks;
             handleTick(this.timeBetweenTicks);
+            this.currentTick++;
+            this.ticks++;
         }
     }
 
@@ -82,11 +80,7 @@ public class Client : MonoBehaviour {
             StatePayload statePayload = new StatePayload(this.currentTick, this.players);
             this.stateBuffer[bufferIndex] = statePayload;
 
-            this.players[id].playerController.movePlayer(newInputs);
-            InstanciateSceneController.Instance.clientPhysicsScene.Simulate(tickTime);
-
             InputPayload inputPayload = new InputPayload(this.currentTick);
-
             uint lastTickCheck = this.lastStateReceivedTick;
             if (this.currentTick - lastTickCheck > this.maxRedundantInputsToSend) lastTickCheck = this.currentTick - this.maxRedundantInputsToSend;
             for (uint tick = lastTickCheck; tick <= this.currentTick; ++tick) {
@@ -106,9 +100,9 @@ public class Client : MonoBehaviour {
 
             if (Random.value > this.packetLossChance) ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpData(packet)); });
 
-            ++this.currentTick;
-            this.ticks++;
+            this.players[id].playerController.movePlayer(newInputs);
         }
+        InstanciateSceneController.Instance.clientPhysicsScene.Simulate(tickTime);
     }
 
     void connectToTcp() {
@@ -149,12 +143,16 @@ public class Client : MonoBehaviour {
     }
 
     public void OnRequestSpawnPosition(Packet packet) {
-        uint serverTick = packet.ReadUint();
         Vector3 position = packet.ReadVector3();
         Quaternion rotation = packet.ReadQuaternion();
+        uint serverTick = packet.ReadUint();
 
-        this.currentTick = serverTick;
-        this.lastStateReceivedTick = serverTick;
+        // TODO PROXIMO PASSO AJUSTAR ESSA PREVISAO
+        float pingInSeconds = tcp.getPing() / 2 / 1000;
+        float rttTimeToGetPacket = (this.latency + pingInSeconds) * tickRate;
+        float rttTimeToFillInputBuffer = rttTimeToGetPacket;
+        this.currentTick = serverTick + (uint)rttTimeToFillInputBuffer + ((uint)this.minInputBufferSizeToStart - 1);
+        this.lastStateReceivedTick = this.currentTick;
 
         Debug.Log("New player");
         ThreadManager.ExecuteOnMainThread(() => {
@@ -170,6 +168,10 @@ public class Client : MonoBehaviour {
             this.players[id].playerController = playerGO.GetComponent<PlayerController>();
             this.players[id].rb.isKinematic = false;
             this.isReady = true;
+
+            Debug.Log("PREDICTED rtt time: " + rttTimeToGetPacket);
+            Debug.Log("ORIGINAL tick: " + serverTick);
+            Debug.Log("PREDICTED TICK: " + this.currentTick);
         });
 
         requestSpawnPlayer(position, rotation);
@@ -214,6 +216,8 @@ public class Client : MonoBehaviour {
 
     public void OnPlayerMovementState(Packet packet) {
         uint serverTick = packet.ReadUint();
+        //Debug.Log("rtt: " + (currentTick - serverTick));
+
         int totalPlayers = packet.ReadInt();
 
         StatePayload serverState = new StatePayload(serverTick);
@@ -229,17 +233,17 @@ public class Client : MonoBehaviour {
 
             if (clientRunPaceId == this.id) {
                 switch (clientRunPace) {
-                    case "inputIsRunningLow":
+                    case "inputBufferIsLow":
                         ThreadManager.ExecuteOnMainThread(() => { this.timeBetweenTicks = 1f / tickRateFastPace; });
-                        Debug.Log("inputIsRunningLow");
+                        //Debug.Log("inputBufferIsLow");
                         break;
-                    case "inputIsRunningHigh":
+                    case "inputBufferIsHigh":
                         ThreadManager.ExecuteOnMainThread(() => { this.timeBetweenTicks = 1f / tickRateSlowPace; });
-                        Debug.Log("inputIsRunningHigh");
+                        //Debug.Log("inputBufferIsHigh");
                         break;
                     default:
                         ThreadManager.ExecuteOnMainThread(() => { this.timeBetweenTicks = 1f / tickRate; });
-                        Debug.Log("inputIsRunningOk");
+                        //Debug.Log("inputBufferIsOk");
                         break;
                 }
             }
@@ -263,14 +267,7 @@ public class Client : MonoBehaviour {
             Vector3 positionError = statePayload.playerstates[player.id].position - this.stateBuffer[bufferIndex].playerstates[player.id].position;
             float rotationError = 1.0f - Quaternion.Dot(statePayload.playerstates[player.id].rotation, this.stateBuffer[bufferIndex].playerstates[player.id].rotation);
 
-            if (positionError.sqrMagnitude > 0.0000001f || rotationError > 0.00001f) {
-                // if (positionError.sqrMagnitude > 0.000000001f) {
-                //     Debug.Log("postion error" + positionError.sqrMagnitude);
-                // }
-                // if (rotationError > 0.0000001f) {
-                //     Debug.Log("Rotation error" + rotationError);
-                // }
-
+            if (positionError.sqrMagnitude > 0.1f || rotationError > 0.1f) {
                 if (player.id == this.id) {
                     var msg = "Reconciliate - error at server tick " + statePayload.tick + " (rewinding " + (this.currentTick - statePayload.tick) + " ticks at tick " + this.currentTick + ")";
                     //Debug.Log(msg);
@@ -281,35 +278,35 @@ public class Client : MonoBehaviour {
                     LogViewer.instance.Log(msg);
                 }
 
-                ThreadManager.ExecuteOnMainThread(() => {
-                    foreach (var enemyPlayer in this.players.Values) {
-                        this.players[enemyPlayer.id].rb.position = statePayload.playerstates[enemyPlayer.id].position;
-                        this.players[enemyPlayer.id].rb.gameObject.transform.position = statePayload.playerstates[enemyPlayer.id].position;
-                        this.players[enemyPlayer.id].rb.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
-                        this.players[enemyPlayer.id].rb.gameObject.transform.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
-                        this.players[enemyPlayer.id].rb.velocity = statePayload.playerstates[enemyPlayer.id].velocity;
-                        this.players[enemyPlayer.id].rb.angularVelocity = statePayload.playerstates[enemyPlayer.id].angularVelocity;
-                    }
+                // ThreadManager.ExecuteOnMainThread(() => {
+                //     foreach (var enemyPlayer in this.players.Values) {
+                //         this.players[enemyPlayer.id].rb.position = statePayload.playerstates[enemyPlayer.id].position;
+                //         this.players[enemyPlayer.id].rb.gameObject.transform.position = statePayload.playerstates[enemyPlayer.id].position;
+                //         this.players[enemyPlayer.id].rb.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
+                //         this.players[enemyPlayer.id].rb.gameObject.transform.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
+                //         this.players[enemyPlayer.id].rb.velocity = statePayload.playerstates[enemyPlayer.id].velocity;
+                //         this.players[enemyPlayer.id].rb.angularVelocity = statePayload.playerstates[enemyPlayer.id].angularVelocity;
+                //     }
 
-                    uint rewind_tick = statePayload.tick;
-                    while (rewind_tick < this.currentTick) {
-                        bufferIndex = rewind_tick % bufferSize;
+                //     uint rewind_tick = statePayload.tick;
+                //     while (rewind_tick < this.currentTick) {
+                //         bufferIndex = rewind_tick % bufferSize;
 
-                        foreach (var playerRewind in this.players.Values) {
-                            if (!this.stateBuffer[bufferIndex].playerstates.ContainsKey(playerRewind.id)) {
-                                this.stateBuffer[bufferIndex].playerstates.Add(playerRewind.id, statePayload.playerstates[playerRewind.id]);
-                            }
-                            this.stateBuffer[bufferIndex].playerstates[playerRewind.id].position = this.players[playerRewind.id].rb.position;
-                            this.stateBuffer[bufferIndex].playerstates[playerRewind.id].rotation = this.players[playerRewind.id].rb.rotation;
-                        }
+                //         foreach (var playerRewind in this.players.Values) {
+                //             if (!this.stateBuffer[bufferIndex].playerstates.ContainsKey(playerRewind.id)) {
+                //                 this.stateBuffer[bufferIndex].playerstates.Add(playerRewind.id, statePayload.playerstates[playerRewind.id]);
+                //             }
+                //             this.stateBuffer[bufferIndex].playerstates[playerRewind.id].position = this.players[playerRewind.id].rb.position;
+                //             this.stateBuffer[bufferIndex].playerstates[playerRewind.id].rotation = this.players[playerRewind.id].rb.rotation;
+                //         }
 
-                        this.players[id].playerController.movePlayer(this.inputBuffer[bufferIndex]);
+                //         this.players[id].playerController.movePlayer(this.inputBuffer[bufferIndex]);
 
-                        InstanciateSceneController.Instance.clientPhysicsScene.Simulate(timeBetweenTicks);
+                //         InstanciateSceneController.Instance.clientPhysicsScene.Simulate(timeBetweenTicks);
 
-                        ++rewind_tick;
-                    }
-                });
+                //         ++rewind_tick;
+                //     }
+                // });
             }
         }
     }

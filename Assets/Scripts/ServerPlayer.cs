@@ -1,6 +1,6 @@
 using System.Net;
-using System.Collections.Concurrent;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class ServerPlayer {
     public string id { get; private set; }
@@ -13,28 +13,29 @@ public class ServerPlayer {
     public Rigidbody rb { get; set; }
     public PlayerController playerController { get; set; }
 
-    private ConcurrentQueue<Inputs> queue;
     public Inputs[] inputBuffer { get; set; }
+    private int inputBufferSize;
     private const int bufferSize = 1024;
 
     public uint lastInputTickRecieved;
 
     public ServerPlayer(string id) {
         this.id = id;
-        this.isReady = false;
-        this.lastInputTickRecieved = 0;
-        this.queue = new ConcurrentQueue<Inputs>();
         this.inputBuffer = new Inputs[bufferSize];
     }
 
     public void addInputs(Inputs inputs) {
         uint bufferIndex = inputs.tick % bufferSize;
         inputBuffer[bufferIndex] = inputs;
-        queue.Enqueue(inputs);
+        inputBufferSize++;
     }
 
     public Inputs getNextInputs(uint tick) {
         uint bufferIndex = tick % bufferSize;
+
+        if (Client.instance != null && Client.instance.id == id) {
+            //Debug.LogWarning("" + id);
+        }
 
         if (inputBuffer[bufferIndex] == null) {
             Debug.Log("Lost tick at: " + tick + " using last one");
@@ -42,16 +43,12 @@ public class ServerPlayer {
             return inputBuffer[index];
         }
 
-        if (queue.TryDequeue(out var inputs)) {
-            return inputBuffer[bufferIndex];
-        }
-
-        Debug.Log("Error to dequeue inputs");
-        return null;
+        inputBufferSize--;
+        return inputBuffer[bufferIndex];
     }
 
     public int getInputsSize() {
-        return queue.Count;
+        return inputBufferSize;
     }
 
     public void disconnect() {

@@ -9,8 +9,8 @@ public class Client : MonoBehaviour {
     public GameObject playerPrefab;
 
     public string id;
-    private string ip = "192.168.0.17";
-    private int port = 8080;
+    private string ip = "127.0.0.1";
+    private int port = 8888;
 
     public bool isReady { get; private set; }
     private uint currentTick;
@@ -27,13 +27,12 @@ public class Client : MonoBehaviour {
     private const float tickRateSlowPace = 100f;
     private const int bufferSize = 1024;
 
-    public float latency { get; private set; } = 0.2f;
-    public float packetLossChance { get; private set; } = 0.05f;
+    public float latency { get; private set; } = 0.0f;
+    public float packetLossChance { get; private set; } = 0.0f;
 
     public double tickRateCheck { get; private set; }
     private int ticks;
     private float lastTickCheck;
-    private float minInputBufferSizeToStart = 8;
     private uint maxRedundantInputsToSend = 20;
 
     public Dictionary<string, Player> players = new Dictionary<string, Player>();
@@ -131,27 +130,24 @@ public class Client : MonoBehaviour {
     }
 
     public void OnConnectByUdp(Packet packet) {
-        requestSpawnPosition();
+        requestSpawnPlayer();
     }
 
-    void requestSpawnPosition() {
+    void requestSpawnPlayer() {
         Packet packet = new Packet();
-        packet.Write("OnRequestSpawnPosition");
+        packet.Write("OnRequestSpawnPlayer");
         packet.Write(this.id);
         packet.Write(this.players[this.id].username);
         ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendTcpData(packet)); });
     }
 
-    public void OnRequestSpawnPosition(Packet packet) {
+    public void OnRequestSpawnPlayer(Packet packet) {
         Vector3 position = packet.ReadVector3();
         Quaternion rotation = packet.ReadQuaternion();
+        int ticksUntilSpawn = packet.ReadInt();
         uint serverTick = packet.ReadUint();
 
-        // TODO PROXIMO PASSO AJUSTAR ESSA PREVISAO
-        float pingInSeconds = tcp.getPing() / 2 / 1000;
-        float rttTimeToGetPacket = (this.latency + pingInSeconds) * tickRate;
-        float rttTimeToFillInputBuffer = rttTimeToGetPacket;
-        this.currentTick = serverTick + (uint)rttTimeToFillInputBuffer + ((uint)this.minInputBufferSizeToStart - 1);
+        this.currentTick = serverTick + (uint)ticksUntilSpawn + 1;
         this.lastStateReceivedTick = this.currentTick;
 
         Debug.Log("New player");
@@ -169,21 +165,8 @@ public class Client : MonoBehaviour {
             this.players[id].rb.isKinematic = false;
             this.isReady = true;
 
-            Debug.Log("PREDICTED rtt time: " + rttTimeToGetPacket);
-            Debug.Log("ORIGINAL tick: " + serverTick);
             Debug.Log("PREDICTED TICK: " + this.currentTick);
         });
-
-        requestSpawnPlayer(position, rotation);
-    }
-
-    void requestSpawnPlayer(Vector3 position, Quaternion rotation) {
-        Packet packet = new Packet();
-        packet.Write("OnRequestSpawnPlayer");
-        packet.Write(this.id);
-        packet.Write(position);
-        packet.Write(rotation);
-        ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendTcpData(packet)); });
     }
 
     public void OnRequestSpawnEnemy(Packet packet) {
@@ -267,7 +250,7 @@ public class Client : MonoBehaviour {
             Vector3 positionError = statePayload.playerstates[player.id].position - this.stateBuffer[bufferIndex].playerstates[player.id].position;
             float rotationError = 1.0f - Quaternion.Dot(statePayload.playerstates[player.id].rotation, this.stateBuffer[bufferIndex].playerstates[player.id].rotation);
 
-            if (positionError.sqrMagnitude > 0.1f || rotationError > 0.1f) {
+            if (positionError.sqrMagnitude > 0.00001f || rotationError > 0.00001f) {
                 if (player.id == this.id) {
                     var msg = "Reconciliate - error at server tick " + statePayload.tick + " (rewinding " + (this.currentTick - statePayload.tick) + " ticks at tick " + this.currentTick + ")";
                     //Debug.Log(msg);
@@ -278,35 +261,35 @@ public class Client : MonoBehaviour {
                     LogViewer.instance.Log(msg);
                 }
 
-                // ThreadManager.ExecuteOnMainThread(() => {
-                //     foreach (var enemyPlayer in this.players.Values) {
-                //         this.players[enemyPlayer.id].rb.position = statePayload.playerstates[enemyPlayer.id].position;
-                //         this.players[enemyPlayer.id].rb.gameObject.transform.position = statePayload.playerstates[enemyPlayer.id].position;
-                //         this.players[enemyPlayer.id].rb.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
-                //         this.players[enemyPlayer.id].rb.gameObject.transform.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
-                //         this.players[enemyPlayer.id].rb.velocity = statePayload.playerstates[enemyPlayer.id].velocity;
-                //         this.players[enemyPlayer.id].rb.angularVelocity = statePayload.playerstates[enemyPlayer.id].angularVelocity;
-                //     }
+                ThreadManager.ExecuteOnMainThread(() => {
+                    foreach (var enemyPlayer in this.players.Values) {
+                        this.players[enemyPlayer.id].rb.position = statePayload.playerstates[enemyPlayer.id].position;
+                        this.players[enemyPlayer.id].rb.gameObject.transform.position = statePayload.playerstates[enemyPlayer.id].position;
+                        this.players[enemyPlayer.id].rb.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
+                        this.players[enemyPlayer.id].rb.gameObject.transform.rotation = statePayload.playerstates[enemyPlayer.id].rotation;
+                        this.players[enemyPlayer.id].rb.velocity = statePayload.playerstates[enemyPlayer.id].velocity;
+                        this.players[enemyPlayer.id].rb.angularVelocity = statePayload.playerstates[enemyPlayer.id].angularVelocity;
+                    }
 
-                //     uint rewind_tick = statePayload.tick;
-                //     while (rewind_tick < this.currentTick) {
-                //         bufferIndex = rewind_tick % bufferSize;
+                    uint rewind_tick = statePayload.tick;
+                    while (rewind_tick < this.currentTick) {
+                        bufferIndex = rewind_tick % bufferSize;
 
-                //         foreach (var playerRewind in this.players.Values) {
-                //             if (!this.stateBuffer[bufferIndex].playerstates.ContainsKey(playerRewind.id)) {
-                //                 this.stateBuffer[bufferIndex].playerstates.Add(playerRewind.id, statePayload.playerstates[playerRewind.id]);
-                //             }
-                //             this.stateBuffer[bufferIndex].playerstates[playerRewind.id].position = this.players[playerRewind.id].rb.position;
-                //             this.stateBuffer[bufferIndex].playerstates[playerRewind.id].rotation = this.players[playerRewind.id].rb.rotation;
-                //         }
+                        foreach (var playerRewind in this.players.Values) {
+                            if (!this.stateBuffer[bufferIndex].playerstates.ContainsKey(playerRewind.id)) {
+                                this.stateBuffer[bufferIndex].playerstates.Add(playerRewind.id, statePayload.playerstates[playerRewind.id]);
+                            }
+                            this.stateBuffer[bufferIndex].playerstates[playerRewind.id].position = this.players[playerRewind.id].rb.position;
+                            this.stateBuffer[bufferIndex].playerstates[playerRewind.id].rotation = this.players[playerRewind.id].rb.rotation;
+                        }
 
-                //         this.players[id].playerController.movePlayer(this.inputBuffer[bufferIndex]);
+                        this.players[id].playerController.movePlayer(this.inputBuffer[bufferIndex]);
 
-                //         InstanciateSceneController.Instance.clientPhysicsScene.Simulate(timeBetweenTicks);
+                        InstanciateSceneController.Instance.clientPhysicsScene.Simulate(timeBetweenTicks);
 
-                //         ++rewind_tick;
-                //     }
-                // });
+                        ++rewind_tick;
+                    }
+                });
             }
         }
     }

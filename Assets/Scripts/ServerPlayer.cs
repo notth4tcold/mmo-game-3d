@@ -19,6 +19,8 @@ public class ServerPlayer {
 
     public uint lastInputTickRecieved;
 
+    public bool first = true;
+
     public ServerPlayer(string id) {
         this.id = id;
         this.inputBuffer = new Inputs[bufferSize];
@@ -28,6 +30,11 @@ public class ServerPlayer {
         uint bufferIndex = inputs.tick % bufferSize;
         inputBuffer[bufferIndex] = inputs;
         inputBufferSize++;
+
+        if (first) {
+            first = false;
+            Debug.Log("first tick: " + inputs.tick);
+        }
     }
 
     public Inputs getNextInputs(uint tick) {

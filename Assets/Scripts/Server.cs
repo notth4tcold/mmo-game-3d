@@ -12,20 +12,20 @@ public class Server : MonoBehaviour {
     private UdpServerController udpListener;
     private int totalPlayers = 0;
     private int maxPlayers = 50;
-    private int port = 8080;
+    private int port = 8888;
 
     private uint currentTick;
-    private bool sendState;
 
     public Dictionary<string, ServerPlayer> players = new Dictionary<string, ServerPlayer>();
 
     private float timer;
     private float timeBetweenTicks;
     private const float tickRate = 120f;
-    private float latency = 0.2f;
-    private float packetLossChance = 0.05f;
+    private float latency = 0.0f;
+    private float packetLossChance = 0.0f;
 
-    private float minInputBufferSizeToStart = 8;
+    private const int ticksUntilSpawn = 10;// 0ms == 10 80ms == 30
+    private float timeToSpawn = ticksUntilSpawn / tickRate;
     private float inputBufferIsLow = 4;
     private float inputBufferIsHigh = 15;
 
@@ -55,48 +55,43 @@ public class Server : MonoBehaviour {
 
     void handleTick(float tickTime) {
         foreach (var player in this.players.Values) {
-            if (!player.isReady || player.getInputsSize() < 0) continue;
+            if (!player.isReady || player.getInputsSize() <= 0) continue;
             Inputs inputs = player.getNextInputs(currentTick);
 
             if (inputs != null) {
                 player.playerController.movePlayer(inputs);
-                this.sendState = true;
             }
         }
 
         InstanciateSceneController.Instance.serverPhysicsScene.Simulate(tickTime);
 
-        if (this.sendState) {
-            StatePayload state = new StatePayload(this.currentTick);
-            foreach (ServerPlayer player in this.players.Values) {
-                if (!player.isReady) continue;
-                state.playerstates.Add(player.id, new PlayerState(player.id, player.rb));
-            }
-
-            Packet packet = new Packet();
-            packet.Write("OnPlayerMovementState");
-            packet.Write(state.tick);
-            packet.Write(state.playerstates.Count);
-            foreach (PlayerState playerState in state.playerstates.Values) {
-                packet.Write(playerState);
-            }
-
-            foreach (PlayerState playerState in state.playerstates.Values) {
-                int inputBufferSize = players[playerState.id].getInputsSize();
-                packet.Write(playerState.id);
-                if (inputBufferSize <= inputBufferIsLow) {
-                    packet.Write("inputBufferIsLow");
-                } else if (inputBufferSize >= inputBufferIsHigh) {
-                    packet.Write("inputBufferIsHigh");
-                } else {
-                    packet.Write("inputBufferIsOk");
-                }
-            }
-
-            if (Random.value > this.packetLossChance) ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpDataToAll(packet)); });
-
-            this.sendState = false;
+        StatePayload state = new StatePayload(this.currentTick);
+        foreach (ServerPlayer player in this.players.Values) {
+            if (!player.isReady) continue;
+            state.playerstates.Add(player.id, new PlayerState(player.id, player.rb));
         }
+
+        Packet packet = new Packet();
+        packet.Write("OnPlayerMovementState");
+        packet.Write(state.tick);
+        packet.Write(state.playerstates.Count);
+        foreach (PlayerState playerState in state.playerstates.Values) {
+            packet.Write(playerState);
+        }
+
+        foreach (PlayerState playerState in state.playerstates.Values) {
+            int inputBufferSize = players[playerState.id].getInputsSize();
+            packet.Write(playerState.id);
+            if (inputBufferSize <= inputBufferIsLow) {
+                packet.Write("inputBufferIsLow");
+            } else if (inputBufferSize >= inputBufferIsHigh) {
+                packet.Write("inputBufferIsHigh");
+            } else {
+                packet.Write("inputBufferIsOk");
+            }
+        }
+
+        if (Random.value > this.packetLossChance) ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpDataToAll(packet)); });
     }
 
     void startServer() {
@@ -144,7 +139,7 @@ public class Server : MonoBehaviour {
 
             // SEND BACK ONLINE PLAYERS
             foreach (var player in this.players.Values) {
-                if (player.id != id) {
+                if (player.isReady && player.id != id) {
                     packet = new Packet();
                     packet.Write("OnRequestSpawnEnemy");
                     packet.Write(player.id);
@@ -164,27 +159,15 @@ public class Server : MonoBehaviour {
         ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendUdpData(id, packetSend)); });
     }
 
-    public void OnRequestSpawnPosition(Packet packet) {
+    public void OnRequestSpawnPlayer(Packet packet) {
         string id = packet.ReadString();
         string username = packet.ReadString();
 
         this.players[id].username = username;
 
+        // Generate a random spawn position and rotation
         Vector3 position = Vector3.zero;
         Quaternion rotation = Quaternion.identity;
-
-        packet = new Packet();
-        packet.Write("OnRequestSpawnPosition");
-        packet.Write(position);
-        packet.Write(rotation);
-        packet.Write(this.currentTick);
-        ThreadManager.ExecuteOnMainThread(() => { StartCoroutine(sendTcpData(id, packet)); });
-    }
-
-    public void OnRequestSpawnPlayer(Packet packet) {
-        string id = packet.ReadString();
-        Vector3 position = packet.ReadVector3();
-        Quaternion rotation = packet.ReadQuaternion();
 
         ThreadManager.ExecuteOnMainThread(() => {
             var playerSimulatorGo = Instantiate(this.playerPrefab, gameObject.scene) as GameObject;
@@ -198,10 +181,33 @@ public class Server : MonoBehaviour {
             this.players[id].rb = playerSimulatorGo.GetComponent<Rigidbody>();
             this.players[id].playerController = playerSimulatorGo.GetComponent<PlayerController>();
 
-            Debug.Log("SERVER SPAWN TICK: " + this.currentTick);
+            System.DateTime timeStamp = System.DateTime.Now;
 
-            // SEND NEW PLAYER TO ALL
+            Debug.Log("SERVER SPAWN TICK: " + this.currentTick);
+            StartCoroutine(spawnPlayerAfterTime(timeToSpawn, id));
+
             packet = new Packet();
+            packet.Write("OnRequestSpawnPlayer");
+            packet.Write(this.players[id].rb.position);
+            packet.Write(this.players[id].rb.rotation);
+            packet.Write(ticksUntilSpawn);
+            packet.Write(this.currentTick);
+            StartCoroutine(sendTcpData(id, packet));
+        });
+    }
+
+    IEnumerator spawnPlayerAfterTime(float time, string id) {
+        yield return new WaitForSeconds(time);
+
+        this.players[id].rb.isKinematic = false;
+        this.players[id].isReady = true;
+
+        Debug.Log("PLAYER INPUTS WHEN START: " + this.players[id].getInputsSize());
+        Debug.Log("SERVER TICK: " + this.currentTick);
+
+        // SEND NEW PLAYER TO ALL
+        ThreadManager.ExecuteOnMainThread(() => {
+            Packet packet = new Packet();
             packet.Write("OnRequestSpawnEnemy");
             packet.Write(this.players[id].id);
             packet.Write(this.players[id].username);
@@ -221,15 +227,6 @@ public class Server : MonoBehaviour {
                 this.players[id].lastInputTickRecieved = inputs.tick;
                 this.players[id].addInputs(inputs);
             }
-        }
-
-        if (!this.players[id].isReady && this.players[id].getInputsSize() >= this.minInputBufferSizeToStart) {
-            ThreadManager.ExecuteOnMainThread(() => {
-                this.players[id].rb.isKinematic = false;
-                this.players[id].isReady = true;
-
-                Debug.Log("SERVER TICK: " + this.currentTick);
-            });
         }
     }
 

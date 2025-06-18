@@ -94,6 +94,10 @@ public class Packet {
         buffer.AddRange(BitConverter.GetBytes(value));
     }
 
+    public void Write(DateTime value) {
+        Write(value.Ticks);
+    }
+
     public void Write(Vector3 value) {
         Write(value.x);
         Write(value.y);
@@ -215,6 +219,11 @@ public class Packet {
         } else {
             throw new Exception("Could not read value of type 'uint'!");
         }
+    }
+
+    public DateTime ReadDateTime(bool moveReadPos = true) {
+        long ticks = ReadLong(moveReadPos);
+        return new DateTime(ticks);
     }
 
     public Vector3 ReadVector3(bool moveReadPos = true) {
